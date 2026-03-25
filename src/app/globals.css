@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-fondo: 9 19 33;
+  --color-panel: 16 32 52;
+  --color-panel-sec: 19 38 61;
+  --color-borde: 160 174 192;
+  --color-dorado: 213 176 107;
+  --color-tinta: 233 238 247;
+  --color-tenue: 167 180 199;
+  --page-gradient: radial-gradient(circle at top, rgba(213, 176, 107, 0.2), transparent 32%),
+    linear-gradient(180deg, #091321 0%, #0b1627 100%);
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  --color-fondo: 244 247 251;
+  --color-panel: 255 255 255;
+  --color-panel-sec: 236 241 248;
+  --color-borde: 180 193 209;
+  --color-dorado: 168 119 44;
+  --color-tinta: 22 31 42;
+  --color-tenue: 83 97 114;
+  --page-gradient: radial-gradient(circle at top, rgba(168, 119, 44, 0.16), transparent 32%),
+    linear-gradient(180deg, #f7f9fc 0%, #edf2f8 100%);
+  color-scheme: light;
+}
+
+html[data-contrast="high"] {
+  --color-panel: 12 18 28;
+  --color-panel-sec: 18 27 41;
+  --color-borde: 232 239 248;
+  --color-tinta: 255 255 255;
+  --color-tenue: 233 238 247;
+}
+
+html[data-theme="light"][data-contrast="high"] {
+  --color-panel: 255 255 255;
+  --color-panel-sec: 255 255 255;
+  --color-borde: 45 55 72;
+  --color-tinta: 8 15 26;
+  --color-tenue: 31 41 55;
+}
+
+html[data-font-scale="base"] {
+  font-size: 16px;
+}
+
+html[data-font-scale="lg"] {
+  font-size: 18px;
+}
+
+html[data-font-scale="xl"] {
+  font-size: 20px;
+}
+
+html[data-spacing="comfortable"] body {
+  line-height: 1.85;
+}
+
+html[data-motion="reduced"] {
+  scroll-behavior: auto;
+}
+
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--page-gradient);
+  color: rgb(var(--color-tinta));
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  border-color: rgb(var(--color-borde));
+}
+
+input,
+select,
+textarea {
+  @apply rounded-xl border bg-panel/80 px-4 py-3 text-base text-tinta outline-none transition;
+  min-height: 3rem;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  @apply border-dorado ring-2 ring-dorado/30;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+a,
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:focus-visible {
+  outline: 3px solid rgb(var(--color-dorado));
+  outline-offset: 2px;
+}

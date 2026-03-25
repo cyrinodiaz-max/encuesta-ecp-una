@@ -1,58 +1,88 @@
-# Encuesta ECP UNA · Next.js + Tailwind + Vercel
+# Encuesta ECP UNA
 
-Proyecto base para la plataforma pública de caracterización institucional de la Escuela de Ciencias Políticas.
+Aplicacion Next.js para encuesta institucional de la Escuela de Ciencias Politicas, con panel administrativo, graficos, detalle individual y exportacion de informe PDF.
 
-## 1. Requisitos
-- Node.js 20+
-- VS Code
+## Requisitos
+
+- Node.js 20 o superior
+- npm
 - Cuenta en Vercel
+- Proyecto Postgres en Supabase para produccion
 
-## 2. Instalación local
+## Desarrollo local
+
 ```bash
 npm install
 npm run dev
 ```
 
-## 3. Rutas
-- `/` Inicio público
-- `/encuesta` Formulario principal
-- `/admin` Vista técnica de estructura administrativa
+## Variables de entorno
 
-## 4. Archivo central para cambiar preguntas y respuestas
-Todo el cuestionario está centralizado en:
+Cree un archivo `.env.local` a partir de `.env.example`.
 
-```bash
-src/config/questionnaire.ts
+```env
+DATABASE_URL=
+ADMIN_USER=CECPUNA
+ADMIN_PASSWORD=admin123
+ADMIN_SESSION_SALT=ecp-una-panel
+ALLOW_SQLITE_FALLBACK=true
 ```
 
-En ese archivo puedes cambiar:
-- título del proyecto
-- subtítulos
-- módulos
-- preguntas
-- opciones
-- límites máximos de selección
-- escalas de evaluación
+Notas:
 
-## 5. Estado actual
-- Interfaz pública funcional
-- Formulario por módulos
-- Validación obligatoria antes de avanzar
-- Logos institucionales integrados
-- Demo de envío guardada en `localStorage`
-- Vista administrativa de estructura y gráfico de demostración
+- En local, si `DATABASE_URL` no existe, la app puede seguir usando SQLite solo como respaldo de desarrollo.
+- En produccion, configure `DATABASE_URL` para usar Supabase/Postgres.
+- Cambie `ADMIN_PASSWORD` y `ADMIN_SESSION_SALT` antes de publicar.
 
-## 6. Siguiente etapa técnica recomendada
-1. Conectar el formulario a Supabase.
-2. Crear autenticación privada para `/admin`.
-3. Guardar cada respuesta con timestamp y tipo de encuestado.
-4. Construir gráficos automáticos por pregunta cerrada.
-5. Habilitar exportación CSV/Excel.
+## Scripts utiles
 
-## 7. Despliegue en Vercel
-1. Sube esta carpeta a GitHub.
-2. Entra a Vercel.
-3. Importa el repositorio.
-4. Framework: Next.js.
-5. Deploy.
+```bash
+npm run dev
+npm run build
+npx tsc --noEmit
+npm run db:import:supabase
+```
 
+## Importar la base local a Supabase
+
+Si ya tienes respuestas guardadas en `data/encuesta-ecp-una.db`, puedes volcarlas a Supabase:
+
+```bash
+npm run db:import:supabase
+```
+
+Si la base remota ya tiene datos y deseas sobrescribirla:
+
+```bash
+FORCE_IMPORT=true npm run db:import:supabase
+```
+
+En PowerShell:
+
+```powershell
+$env:FORCE_IMPORT="true"
+npm run db:import:supabase
+```
+
+## Rutas principales
+
+- `/` Inicio publico
+- `/encuesta` Formulario principal
+- `/admin` Panel de control
+- `/api/admin/report` Descarga del informe PDF
+
+## Despliegue en Vercel
+
+1. Sube el proyecto a GitHub.
+2. Importa el repositorio en Vercel.
+3. Configura las variables de entorno del proyecto.
+4. Ejecuta el despliegue.
+5. Verifica el envio de encuestas y el acceso al panel.
+
+## Estructura importante
+
+- `src/config/questionnaire.ts`: preguntas, modulos y opciones
+- `src/lib/survey-db.ts`: persistencia y lectura de datos
+- `src/app/api/surveys/route.ts`: envio del formulario
+- `src/app/admin/page.tsx`: acceso y panel administrativo
+- `src/app/api/admin/report/route.ts`: generacion de informe PDF
