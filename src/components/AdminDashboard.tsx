@@ -18,6 +18,12 @@ import { DashboardData, QuestionSummary } from "@/lib/survey-db";
 
 const chartColors = ["#d5b06b", "#87b7ff", "#6fd3b3", "#ff8c8c", "#b89cff", "#ffd37a", "#7ed0ff"];
 
+type AdminDashboardProps = {
+  data: DashboardData;
+  role: "superadmin" | "analista";
+  roleLabel: string;
+};
+
 function ChartModal({
   summary,
   onClose,
@@ -110,8 +116,9 @@ function ChartModal({
   );
 }
 
-export function AdminDashboard({ data }: { data: DashboardData }) {
+export function AdminDashboard({ data, role, roleLabel }: AdminDashboardProps) {
   const [activeChart, setActiveChart] = useState<QuestionSummary | null>(null);
+  const canViewSensitiveDetails = role === "superadmin";
 
   const moduleEntries = useMemo(() => {
     const moduleSummaries = data.questionSummaries.reduce<Record<string, typeof data.questionSummaries>>((accumulator, summary) => {
@@ -228,53 +235,72 @@ export function AdminDashboard({ data }: { data: DashboardData }) {
         <section className="rounded-[32px] border border-borde bg-panel/88 p-6 shadow-suave backdrop-blur">
           <div className="mb-5">
             <p className="text-sm uppercase tracking-[0.24em] text-dorado">Detalle individual</p>
-            <h2 className="mt-2 text-2xl font-bold">Acceso por persona y respuestas completas</h2>
+            <h2 className="mt-2 text-2xl font-bold">
+              {canViewSensitiveDetails ? "Acceso por persona y respuestas completas" : "Detalle protegido por rol"}
+            </h2>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-tenue">
-              Cada registro queda contraido por defecto. Abra solo la persona que desea revisar.
+              {canViewSensitiveDetails
+                ? "Cada registro queda contraido por defecto. Abra solo la persona que desea revisar."
+                : `El nivel ${roleLabel} puede acceder a estadisticas y graficos, pero no al detalle individual de las personas encuestadas.`}
             </p>
           </div>
-          {data.submissions.length ? (
-            <div className="space-y-5">
-              {data.submissions.map((submission) => (
-                <details key={submission.id} className="rounded-3xl border border-borde bg-panelSec/68 p-5">
-                  <summary className="flex cursor-pointer list-none flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                    <div>
-                      <h3 className="text-xl font-bold text-tinta">{submission.respondentName}</h3>
-                      <p className="mt-2 text-sm leading-6 text-tenue">
-                        {submission.relationLabel} · {submission.respondentEmail} · {submission.respondentPhone}
-                      </p>
-                      <p className="mt-2 text-sm font-medium text-dorado">Pulse para ver respuestas completas</p>
-                    </div>
-                    <div className="rounded-2xl border border-borde bg-panel px-4 py-3 text-sm text-tenue">
-                      Registro #{submission.id}
-                      <div className="mt-1 font-medium text-tinta">{formatAsuncionDate(submission.createdAt)}</div>
-                    </div>
-                  </summary>
 
-                  <div className="mt-4 space-y-4 border-t border-borde pt-4">
-                    {submission.modules.map((module) => (
-                      <div key={`${submission.id}-${module.moduleId}`} className="rounded-3xl border border-borde bg-panel/80 p-4">
-                        <h4 className="text-base font-semibold text-tinta">{module.moduleTitle}</h4>
-                        <div className="mt-3 space-y-3">
-                          {module.questions.map((question) => (
-                            <div
-                              key={`${submission.id}-${module.moduleId}-${question.questionId}`}
-                              className="rounded-2xl border border-borde bg-panelSec/65 px-4 py-3"
-                            >
-                              <p className="text-sm font-semibold tracking-[0.01em] text-tinta">{question.questionPrompt}</p>
-                              <p className="mt-2 text-sm leading-6 text-tenue">{question.answerDisplay}</p>
-                            </div>
-                          ))}
-                        </div>
+          {canViewSensitiveDetails ? (
+            data.submissions.length ? (
+              <div className="space-y-5">
+                {data.submissions.map((submission) => (
+                  <details key={submission.id} className="rounded-3xl border border-borde bg-panelSec/68 p-5">
+                    <summary className="flex cursor-pointer list-none flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <h3 className="text-xl font-bold text-tinta">{submission.respondentName}</h3>
+                        <p className="mt-2 text-sm leading-6 text-tenue">
+                          {submission.relationLabel} · {submission.respondentEmail} · {submission.respondentPhone}
+                        </p>
+                        <p className="mt-2 text-sm font-medium text-dorado">Pulse para ver respuestas completas</p>
                       </div>
-                    ))}
-                  </div>
-                </details>
-              ))}
-            </div>
+                      <div className="rounded-2xl border border-borde bg-panel px-4 py-3 text-sm text-tenue">
+                        Registro #{submission.id}
+                        <div className="mt-1 font-medium text-tinta">{formatAsuncionDate(submission.createdAt)}</div>
+                      </div>
+                    </summary>
+
+                    <div className="mt-4 space-y-4 border-t border-borde pt-4">
+                      {submission.modules.map((module) => (
+                        <div key={`${submission.id}-${module.moduleId}`} className="rounded-3xl border border-borde bg-panel/80 p-4">
+                          <h4 className="text-base font-semibold text-tinta">{module.moduleTitle}</h4>
+                          <div className="mt-3 space-y-3">
+                            {module.questions.map((question) => (
+                              <div
+                                key={`${submission.id}-${module.moduleId}-${question.questionId}`}
+                                className="rounded-2xl border border-borde bg-panelSec/65 px-4 py-3"
+                              >
+                                <p className="text-sm font-semibold tracking-[0.01em] text-tinta">{question.questionPrompt}</p>
+                                <p className="mt-2 text-sm leading-6 text-tenue">{question.answerDisplay}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-3xl border border-dashed border-borde bg-panelSec/60 px-5 py-8 text-sm leading-7 text-tenue">
+                Todavia no se registraron respuestas en la base institucional de la encuesta.
+              </div>
+            )
           ) : (
-            <div className="rounded-3xl border border-dashed border-borde bg-panelSec/60 px-5 py-8 text-sm leading-7 text-tenue">
-              Todavia no se registraron respuestas en la base institucional de la encuesta.
+            <div className="rounded-3xl border border-borde bg-panelSec/68 px-5 py-6 text-sm leading-7 text-tenue">
+              <p className="font-semibold text-tinta">Vista protegida</p>
+              <p className="mt-2">
+                Para proteger datos personales, los nombres, correos, telefonos y respuestas individuales solo se
+                muestran a usuarios con nivel Superadmin.
+              </p>
+              <p className="mt-3">
+                Con su acceso actual puede analizar volumen de respuestas, distribuciones, porcentajes y graficos por
+                pregunta sin exponer informacion sensible.
+              </p>
             </div>
           )}
         </section>

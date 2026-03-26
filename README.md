@@ -22,8 +22,7 @@ Cree un archivo `.env.local` a partir de `.env.example`.
 
 ```env
 DATABASE_URL=
-ADMIN_USER=CECPUNA
-ADMIN_PASSWORD=admin123
+ADMIN_ACCOUNTS_JSON=
 ADMIN_SESSION_SALT=ecp-una-panel
 ALLOW_SQLITE_FALLBACK=true
 ```
@@ -32,7 +31,9 @@ Notas:
 
 - En local, si `DATABASE_URL` no existe, la app puede seguir usando SQLite solo como respaldo de desarrollo.
 - En produccion, configure `DATABASE_URL` para usar Supabase/Postgres.
-- Cambie `ADMIN_PASSWORD` y `ADMIN_SESSION_SALT` antes de publicar.
+- Puede usar `ADMIN_ACCOUNTS_JSON` para definir usuarios y roles personalizados.
+- Si no define `ADMIN_ACCOUNTS_JSON`, la aplicacion usa la lista de accesos configurada en el proyecto.
+- Cambie `ADMIN_SESSION_SALT` antes de publicar.
 
 ## Scripts utiles
 

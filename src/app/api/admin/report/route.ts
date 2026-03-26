@@ -1,9 +1,10 @@
 import path from "node:path";
 import sharp from "sharp";
 import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf-lib";
+import { getAdminRoleLabel } from "@/lib/admin-auth";
 import { formatAsuncionDate } from "@/lib/date-format";
 import { getDashboardData } from "@/lib/survey-db";
-import { isAdminAuthenticated } from "@/lib/admin-auth";
+import { getAdminSession } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,10 +21,14 @@ type ReportContext = {
 };
 
 export async function GET() {
-  const authenticated = await isAdminAuthenticated();
+  const session = await getAdminSession();
 
-  if (!authenticated) {
+  if (!session) {
     return new Response("No autorizado", { status: 401 });
+  }
+
+  if (session.role !== "superadmin") {
+    return new Response("Acceso restringido a Superadmin.", { status: 403 });
   }
 
   const data = await getDashboardData();
@@ -66,6 +71,10 @@ export async function GET() {
   drawParagraph(
     context,
     `A la fecha del corte se registran ${data.totalSubmissions} formularios completos y ${data.totalDetailedAnswers} respuestas detalladas. Cada formulario corresponde a una persona encuestada y cada respuesta detallada representa una observacion individual normalizada por pregunta.`,
+  );
+  drawParagraph(
+    context,
+    `Documento emitido por ${session.username} con nivel de acceso ${getAdminRoleLabel(session.role)}.`,
   );
   drawParagraph(
     context,

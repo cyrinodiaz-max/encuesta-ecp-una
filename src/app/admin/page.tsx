@@ -1,6 +1,6 @@
 import { AdminDashboard } from "@/components/AdminDashboard";
 import { BrandHeader } from "@/components/BrandHeader";
-import { isAdminAuthenticated } from "@/lib/admin-auth";
+import { getAdminRoleLabel, getAdminSession } from "@/lib/admin-auth";
 import { getDashboardData } from "@/lib/survey-db";
 
 export const runtime = "nodejs";
@@ -13,9 +13,9 @@ type AdminPageProps = {
 };
 
 export default async function AdminPage({ searchParams }: AdminPageProps) {
-  const authenticated = await isAdminAuthenticated();
+  const session = await getAdminSession();
 
-  if (!authenticated) {
+  if (!session) {
     const resolvedSearchParams = (await searchParams) ?? {};
     const showError = resolvedSearchParams.error === "invalid";
 
@@ -102,6 +102,14 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
             Visualice el total de respuestas, la informacion detallada por pregunta y el historial completo de envios
             registrados en la base de datos institucional.
           </p>
+          <div className="mt-4 flex flex-wrap gap-3 text-sm">
+            <span className="rounded-full border border-borde bg-panelSec/78 px-4 py-2 font-semibold text-tinta">
+              Usuario: {session.username}
+            </span>
+            <span className="rounded-full border border-dorado/50 bg-dorado/15 px-4 py-2 font-semibold text-tinta">
+              Nivel: {getAdminRoleLabel(session.role)}
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -111,12 +119,18 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
           >
             Volver al inicio
           </a>
-          <a
-            href="/api/admin/report"
-            className="rounded-2xl border border-borde bg-panelSec/78 px-5 py-3 text-center text-sm font-semibold text-tinta transition hover:bg-panelSec"
-          >
-            Descargar informe general
-          </a>
+          {session.role === "superadmin" ? (
+            <a
+              href="/api/admin/report"
+              className="rounded-2xl border border-borde bg-panelSec/78 px-5 py-3 text-center text-sm font-semibold text-tinta transition hover:bg-panelSec"
+            >
+              Descargar informe general
+            </a>
+          ) : (
+            <div className="rounded-2xl border border-borde bg-panelSec/68 px-5 py-3 text-center text-sm font-semibold text-tenue">
+              El informe PDF completo esta disponible solo para Superadmin.
+            </div>
+          )}
           <form action="/api/admin/logout" method="post">
             <button
               type="submit"
@@ -128,7 +142,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
         </div>
       </section>
 
-      <AdminDashboard data={dashboardData} />
+      <AdminDashboard data={dashboardData} role={session.role} roleLabel={getAdminRoleLabel(session.role)} />
     </main>
   );
 }

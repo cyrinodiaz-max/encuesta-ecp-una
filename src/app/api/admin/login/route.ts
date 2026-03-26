@@ -9,12 +9,14 @@ export async function POST(request: Request) {
   const password = String(formData.get("password") ?? "");
   const url = new URL(request.url);
 
-  if (!validateAdminCredentials(username, password)) {
+  const session = validateAdminCredentials(username, password);
+
+  if (!session) {
     return NextResponse.redirect(new URL("/admin?error=invalid", url), 303);
   }
 
   const response = NextResponse.redirect(new URL("/admin", url), 303);
-  response.cookies.set(ADMIN_SESSION_COOKIE, getAdminSessionCookieValue(), {
+  response.cookies.set(ADMIN_SESSION_COOKIE, getAdminSessionCookieValue(session), {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
