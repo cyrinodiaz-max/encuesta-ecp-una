@@ -45,15 +45,15 @@ html[data-theme="light"][data-contrast="high"] {
 }
 
 html[data-font-scale="base"] {
-  font-size: 16px;
+  font-size: 80%;
 }
 
 html[data-font-scale="lg"] {
-  font-size: 18px;
+  font-size: 90%;
 }
 
 html[data-font-scale="xl"] {
-  font-size: 20px;
+  font-size: 100%;
 }
 
 html[data-spacing="comfortable"] body {
@@ -73,6 +73,7 @@ html[data-motion="reduced"] *::after {
 }
 
 html {
+  font-size: 80%;
   scroll-behavior: smooth;
 }
 
