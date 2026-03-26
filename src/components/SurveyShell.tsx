@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { useAccessibility } from "@/components/AccessibilityPanel";
 import { QuestionRenderer } from "@/components/QuestionRenderer";
@@ -24,6 +24,7 @@ function isQuestionAnswered(question: Question, value: string | string[] | undef
 
 export function SurveyShell() {
   const { reduceMotion } = useAccessibility();
+  const formSectionRef = useRef<HTMLElement | null>(null);
   const [relation, setRelation] = useState<RelationKey | null>(null);
   const [started, setStarted] = useState(false);
   const [step, setStep] = useState(0);
@@ -53,6 +54,17 @@ export function SurveyShell() {
   }, [answers, currentModule]);
 
   const progress = modules.length ? Math.round(((step + 1) / modules.length) * 100) : 0;
+
+  useEffect(() => {
+    if (!started || submitted || !currentModule) {
+      return;
+    }
+
+    formSectionRef.current?.scrollIntoView({
+      behavior: reduceMotion ? "auto" : "smooth",
+      block: "start",
+    });
+  }, [currentModule, reduceMotion, started, submitted]);
 
   const updateAnswer = (id: string, value: string | string[]) => {
     setAnswers((previous) => ({ ...previous, [id]: value }));
@@ -218,7 +230,7 @@ export function SurveyShell() {
   }
 
   return (
-    <section className="rounded-[32px] border border-borde bg-panel/85 p-4 shadow-suave backdrop-blur md:p-10">
+    <section ref={formSectionRef} className="rounded-[32px] border border-borde bg-panel/85 p-4 shadow-suave backdrop-blur md:p-10">
       <div className="mb-8 space-y-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
