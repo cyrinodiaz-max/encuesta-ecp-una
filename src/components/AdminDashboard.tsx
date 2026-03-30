@@ -4,8 +4,9 @@ import { useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
+  CartesianGrid,
   Cell,
-  Legend,
+  LabelList,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -13,6 +14,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import type { TooltipProps } from "recharts";
 import { formatAsuncionDate } from "@/lib/date-format";
 import { DashboardData, QuestionSummary } from "@/lib/survey-db";
 
@@ -23,6 +25,31 @@ type AdminDashboardProps = {
   role: "superadmin" | "analista";
   roleLabel: string;
 };
+
+function truncateChartLabel(label: string, maxLength = 30) {
+  if (label.length <= maxLength) {
+    return label;
+  }
+
+  return `${label.slice(0, maxLength - 3)}...`;
+}
+
+function ChartTooltip({ active, payload, label }: TooltipProps<number, string>) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  const current = payload[0];
+  const optionLabel = String(label ?? current.name ?? "Opcion");
+  const value = typeof current.value === "number" ? current.value : Number(current.value ?? 0);
+
+  return (
+    <div className="rounded-2xl border border-borde bg-panel px-3 py-2 shadow-[0_18px_48px_rgba(3,7,18,0.35)]">
+      <p className="text-sm font-semibold text-tinta">{optionLabel}</p>
+      <p className="mt-1 text-xs uppercase tracking-[0.16em] text-dorado">{value} respuestas</p>
+    </div>
+  );
+}
 
 function ChartModal({
   summary,
@@ -35,15 +62,17 @@ function ChartModal({
     return null;
   }
 
-  const pieData = summary.options.map((option, index) => ({
+  const chartOptions = summary.options.filter((option) => option.total > 0);
+  const pieData = chartOptions.map((option, index) => ({
     name: option.label,
     value: option.total,
     fill: chartColors[index % chartColors.length],
   }));
+  const barChartHeight = Math.max(320, chartOptions.length * 58);
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
-      <div className="max-h-[90vh] w-full max-w-5xl overflow-auto rounded-[32px] border border-borde bg-panel p-5 shadow-[0_28px_80px_rgba(0,0,0,0.35)] md:p-6">
+      <div className="max-h-[90vh] w-full max-w-6xl overflow-auto rounded-[32px] border border-borde bg-panel p-5 shadow-[0_28px_80px_rgba(0,0,0,0.35)] md:p-6">
         <div className="flex flex-col gap-4 border-b border-borde pb-4 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-sm uppercase tracking-[0.24em] text-dorado">Graficos</p>
@@ -61,54 +90,129 @@ function ChartModal({
           </button>
         </div>
 
-        <div className="mt-5 grid gap-5 lg:grid-cols-2">
-          <section className="rounded-3xl border border-borde bg-panelSec/72 p-4">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-dorado">Grafico de barras</p>
-            <div className="mt-4 h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={summary.options}>
-                  <XAxis dataKey="label" stroke="rgb(var(--color-tenue))" interval={0} angle={-12} textAnchor="end" height={80} />
-                  <YAxis stroke="rgb(var(--color-tenue))" allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="total" radius={[10, 10, 0, 0]}>
-                    {summary.options.map((option, index) => (
-                      <Cell key={`${summary.questionId}-${option.label}-bar`} fill={chartColors[index % chartColors.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="rounded-3xl border border-borde bg-panelSec/72 p-4">
-            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-dorado">Grafico circular</p>
-            <div className="mt-4 h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={110} innerRadius={50} paddingAngle={2}>
-                    {pieData.map((slice) => (
-                      <Cell key={`${summary.questionId}-${slice.name}-pie`} fill={slice.fill} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-        </div>
-
-        <div className="mt-5 rounded-3xl border border-borde bg-panelSec/68 p-4">
-          <p className="text-sm font-semibold uppercase tracking-[0.18em] text-dorado">Lectura tecnica</p>
-          <div className="mt-3 space-y-2">
-            {summary.options.map((option) => (
-              <div key={`${summary.questionId}-${option.label}-read`} className="flex items-center justify-between gap-3 text-sm">
-                <span className="font-medium text-tinta">{option.label}</span>
-                <span className="text-tenue">
-                  {option.total} respuestas · {option.percent}%
-                </span>
+        <div className="mt-5 space-y-5">
+          <section className="rounded-3xl border border-borde bg-panelSec/72 p-4 md:p-5">
+            <div className="flex flex-col gap-2 border-b border-borde pb-4 md:flex-row md:items-end md:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-dorado">Grafico de barras</p>
+                <p className="mt-2 text-sm leading-7 text-tenue">
+                  Vista comparativa optimizada para preguntas con muchas alternativas.
+                </p>
               </div>
-            ))}
+              <p className="text-xs uppercase tracking-[0.16em] text-tenue">
+                Las etiquetas largas se resumen aqui y se detallan completas abajo.
+              </p>
+            </div>
+
+            {chartOptions.length ? (
+              <div className="mt-4 rounded-3xl bg-panel/45 px-2 py-3 md:px-4">
+                <div style={{ height: `${barChartHeight}px` }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={chartOptions}
+                      layout="vertical"
+                      margin={{ top: 8, right: 28, bottom: 8, left: 8 }}
+                      barCategoryGap={14}
+                    >
+                      <CartesianGrid horizontal stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
+                      <XAxis
+                        type="number"
+                        allowDecimals={false}
+                        stroke="rgb(var(--color-tenue))"
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        type="category"
+                        dataKey="label"
+                        width={220}
+                        stroke="rgb(var(--color-tenue))"
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => truncateChartLabel(String(value))}
+                      />
+                      <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                      <Bar dataKey="total" radius={[0, 12, 12, 0]} maxBarSize={28}>
+                        <LabelList
+                          dataKey="total"
+                          position="right"
+                          fill="rgb(var(--color-tinta))"
+                          fontSize={12}
+                          fontWeight={700}
+                        />
+                        {chartOptions.map((option, index) => (
+                          <Cell key={`${summary.questionId}-${option.label}-bar`} fill={chartColors[index % chartColors.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 rounded-3xl border border-dashed border-borde bg-panel/55 px-5 py-8 text-sm leading-7 text-tenue">
+                Aun no hay respuestas acumuladas para generar un grafico comparativo de esta pregunta.
+              </div>
+            )}
+          </section>
+
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
+            <section className="rounded-3xl border border-borde bg-panelSec/72 p-4 md:p-5">
+              <div className="border-b border-borde pb-4">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-dorado">Grafico circular</p>
+                <p className="mt-2 text-sm leading-7 text-tenue">
+                  Distribucion porcentual de las respuestas actualmente registradas.
+                </p>
+              </div>
+
+              {pieData.length ? (
+                <div className="mt-4 h-[320px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={pieData} dataKey="value" nameKey="name" outerRadius={112} innerRadius={58} paddingAngle={2}>
+                        {pieData.map((slice) => (
+                          <Cell key={`${summary.questionId}-${slice.name}-pie`} fill={slice.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip content={<ChartTooltip />} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="mt-4 rounded-3xl border border-dashed border-borde bg-panel/55 px-5 py-8 text-sm leading-7 text-tenue">
+                  El grafico circular se habilitara cuando exista al menos una respuesta valida para esta pregunta.
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-3xl border border-borde bg-panelSec/68 p-4 md:p-5">
+              <div className="border-b border-borde pb-4">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-dorado">Lectura tecnica</p>
+                <p className="mt-2 text-sm leading-7 text-tenue">
+                  Referencia completa por opcion, con cantidad acumulada y participacion porcentual.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                {summary.options.map((option, index) => (
+                  <div
+                    key={`${summary.questionId}-${option.label}-read`}
+                    className="rounded-2xl border border-borde bg-panel/72 px-4 py-3"
+                  >
+                    <div className="flex items-start gap-3">
+                      <span
+                        className="mt-1 h-3 w-3 shrink-0 rounded-full"
+                        style={{ backgroundColor: chartColors[index % chartColors.length] }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold leading-6 text-tinta">{option.label}</p>
+                        <p className="mt-1 text-sm text-tenue">
+                          {option.total} respuestas | {option.percent}%
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -210,7 +314,7 @@ export function AdminDashboard({ data, role, roleLabel }: AdminDashboardProps) {
                               <div className="flex items-center justify-between gap-3 text-sm">
                                 <span className="font-medium text-tinta">{option.label}</span>
                                 <span className="text-tenue">
-                                  {option.total} · {option.percent}%
+                                  {option.total} | {option.percent}%
                                 </span>
                               </div>
                               <div className="h-3 overflow-hidden rounded-full bg-panelSec">
@@ -254,7 +358,7 @@ export function AdminDashboard({ data, role, roleLabel }: AdminDashboardProps) {
                       <div>
                         <h3 className="text-xl font-bold text-tinta">{submission.respondentName}</h3>
                         <p className="mt-2 text-sm leading-6 text-tenue">
-                          {submission.relationLabel} · {submission.respondentEmail} · {submission.respondentPhone}
+                          {submission.relationLabel} | {submission.respondentEmail} | {submission.respondentPhone}
                         </p>
                         <p className="mt-2 text-sm font-medium text-dorado">Pulse para ver respuestas completas</p>
                       </div>
