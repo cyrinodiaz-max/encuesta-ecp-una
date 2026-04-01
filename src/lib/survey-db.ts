@@ -418,9 +418,13 @@ function buildDashboardData(
     modules: buildSubmissionModules(submission.relation, submission.answers_json),
   }));
 
-  const summaryRows = answerRows.filter((answer) =>
-    answer.questionType === "single" || answer.questionType === "multiple" || answer.questionType === "scale",
-  );
+  const summaryRows = answerRows.filter((answer) => {
+    if (!(answer.questionType === "single" || answer.questionType === "multiple" || answer.questionType === "scale")) {
+      return false;
+    }
+
+    return getQuestionMap(answer.relation).has(answer.questionId);
+  });
 
   const questionSummaryMap = new Map<
     string,
