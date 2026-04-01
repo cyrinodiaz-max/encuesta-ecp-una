@@ -1,10 +1,11 @@
 import path from "node:path";
 import sharp from "sharp";
 import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont } from "pdf-lib";
-import { getAdminRoleLabel } from "@/lib/admin-auth";
+import { canAccessRelation, getAdminRoleLabel, getAdminSession } from "@/lib/admin-auth";
 import { formatAsuncionDate } from "@/lib/date-format";
-import { getDashboardData } from "@/lib/survey-db";
-import { getAdminSession } from "@/lib/admin-auth";
+import { getRelationConfig } from "@/lib/questionnaire-helpers";
+import { DashboardData, getDashboardData, QuestionSummary } from "@/lib/survey-db";
+import { RelationKey } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,18 +21,284 @@ type ReportContext = {
   y: number;
 };
 
-export async function GET() {
+type OpenResponseGroup = {
+  moduleTitle: string;
+  questionPrompt: string;
+  responses: string[];
+};
+
+const relationOrder: RelationKey[] = ["estudiante", "docente", "funcionario", "egresado"];
+
+const stopWords = new Set([
+  "para",
+  "porque",
+  "sobre",
+  "entre",
+  "desde",
+  "hasta",
+  "este",
+  "esta",
+  "estas",
+  "estos",
+  "como",
+  "pero",
+  "donde",
+  "cuando",
+  "deberia",
+  "deberian",
+  "tener",
+  "hacia",
+  "tambien",
+  "mucho",
+  "mucha",
+  "muchas",
+  "muchos",
+  "poco",
+  "poca",
+  "pocas",
+  "pocos",
+  "seria",
+  "serian",
+  "escuela",
+  "facultad",
+  "carrera",
+  "formacion",
+  "egresado",
+  "egresados",
+  "docente",
+  "docentes",
+  "estudiante",
+  "estudiantes",
+  "funcionario",
+  "funcionarios",
+  "institucion",
+  "institucional",
+  "universidad",
+  "general",
+  "siempre",
+  "nunca",
+  "porque",
+  "aunque",
+  "ademas",
+  "mismo",
+  "misma",
+  "mismos",
+  "mismas",
+  "tiene",
+  "tienen",
+  "hacer",
+  "hacen",
+  "sino",
+  "solo",
+  "cada",
+  "todas",
+  "todos",
+  "toda",
+  "todo",
+  "ellos",
+  "ellas",
+  "nosotros",
+  "ustedes",
+  "usted",
+  "ellos",
+  "ellas",
+]);
+
+function isRelationKey(value: string | null): value is RelationKey {
+  return value === "estudiante" || value === "docente" || value === "funcionario" || value === "egresado";
+}
+
+function getScopeTitle(relation: RelationKey | null) {
+  return relation ? `Informe de ${getRelationConfig(relation).label}` : "Informe general consolidado";
+}
+
+function getScopeSubtitle(relation: RelationKey | null) {
+  return relation
+    ? `Analisis detallado y acumulado de la relacion ${getRelationConfig(relation).label.toLowerCase()} con la Escuela de Ciencias Politicas.`
+    : "Analisis consolidado de estudiantes, docentes, funcionarios y egresados en un solo corte institucional.";
+}
+
+function getReportFilename(relation: RelationKey | null) {
+  return relation
+    ? `informe-${relation}-encuesta-ecp-una.pdf`
+    : "informe-general-encuesta-ecp-una.pdf";
+}
+
+function describeScaleBand(averageScore: number) {
+  if (averageScore >= 4.5) {
+    return "muy favorable";
+  }
+
+  if (averageScore >= 3.5) {
+    return "favorable";
+  }
+
+  if (averageScore >= 2.5) {
+    return "intermedia";
+  }
+
+  if (averageScore >= 1.5) {
+    return "debil";
+  }
+
+  return "muy debil";
+}
+
+function buildClosedQuestionInsight(summary: QuestionSummary) {
+  const topOption = summary.options[0];
+  const secondOption = summary.options[1];
+
+  if (!topOption) {
+    return "No se registran respuestas suficientes para construir una interpretacion de esta pregunta.";
+  }
+
+  if (summary.questionType === "scale" && summary.averageScore) {
+    const trend = describeScaleBand(summary.averageScore);
+
+    return `La valoracion promedio de esta pregunta es ${summary.averageScore}/5, lo que refleja una percepcion ${trend}. La categoria con mayor frecuencia fue "${topOption.label}" con ${topOption.total} respuestas (${topOption.percent}%).`;
+  }
+
+  if (!secondOption) {
+    return `La totalidad de las respuestas validas se concentro en "${topOption.label}", con ${topOption.total} registros y una participacion del ${topOption.percent}%.`;
+  }
+
+  return `La opcion predominante fue "${topOption.label}" con ${topOption.total} respuestas (${topOption.percent}%). En segundo lugar aparece "${secondOption.label}" con ${secondOption.total} respuestas (${secondOption.percent}%), lo que permite identificar la tendencia principal y su contraste inmediato.`;
+}
+
+function collectOpenResponseGroups(data: DashboardData) {
+  const groups = new Map<string, OpenResponseGroup>();
+
+  data.submissions.forEach((submission) => {
+    submission.modules.forEach((module) => {
+      module.questions.forEach((question) => {
+        if (question.questionType !== "textarea") {
+          return;
+        }
+
+        const answer = question.answerDisplay.trim();
+
+        if (!answer) {
+          return;
+        }
+
+        const key = `${module.moduleTitle}::${question.questionPrompt}`;
+        const current = groups.get(key) ?? {
+          moduleTitle: module.moduleTitle,
+          questionPrompt: question.questionPrompt,
+          responses: [],
+        };
+
+        current.responses.push(answer);
+        groups.set(key, current);
+      });
+    });
+  });
+
+  return [...groups.values()];
+}
+
+function extractTopKeywords(responses: string[], limit = 5) {
+  const frequencies = new Map<string, number>();
+
+  responses.forEach((response) => {
+    const normalized = response
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ");
+
+    normalized
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length >= 4 && !stopWords.has(token))
+      .forEach((token) => {
+        frequencies.set(token, (frequencies.get(token) ?? 0) + 1);
+      });
+  });
+
+  return [...frequencies.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, limit)
+    .map(([token]) => token);
+}
+
+function buildOpenResponseInsight(group: OpenResponseGroup) {
+  const keywords = extractTopKeywords(group.responses, 4);
+  const keywordPhrase = keywords.length ? ` Temas recurrentes detectados: ${keywords.join(", ")}.` : "";
+
+  return `Se registraron ${group.responses.length} respuestas abiertas para esta pregunta.${keywordPhrase} Esta lectura automatizada resume los focos cualitativos mas repetidos sin reemplazar la revision textual completa del anexo.`;
+}
+
+function buildOverallConclusions(data: DashboardData, relation: RelationKey | null) {
+  const scaleSummaries = data.questionSummaries
+    .filter((summary) => summary.questionType === "scale" && typeof summary.averageScore === "number")
+    .sort((left, right) => (right.averageScore ?? 0) - (left.averageScore ?? 0));
+
+  const categoricalSummaries = data.questionSummaries.filter(
+    (summary) => summary.questionType === "single" || summary.questionType === "multiple",
+  );
+  const openGroups = collectOpenResponseGroups(data);
+
+  const conclusions: string[] = [];
+
+  if (scaleSummaries.length) {
+    const best = scaleSummaries[0];
+    const weakest = scaleSummaries[scaleSummaries.length - 1];
+
+    conclusions.push(
+      `En la lectura cuantitativa, el mejor desempeno corresponde a "${best.questionPrompt}" con promedio ${best.averageScore}/5, mientras que la dimension mas fragil es "${weakest.questionPrompt}" con promedio ${weakest.averageScore}/5.`,
+    );
+  }
+
+  const strongestCategorical = categoricalSummaries
+    .map((summary) => ({
+      summary,
+      topOption: summary.options[0],
+    }))
+    .filter((item): item is { summary: QuestionSummary; topOption: QuestionSummary["options"][number] } => Boolean(item.topOption))
+    .sort((left, right) => right.topOption.percent - left.topOption.percent)[0];
+
+  if (strongestCategorical) {
+    conclusions.push(
+      `La tendencia cerrada con mayor concentracion se observa en "${strongestCategorical.summary.questionPrompt}", donde predomina "${strongestCategorical.topOption.label}" con ${strongestCategorical.topOption.percent}% del total considerado.`,
+    );
+  }
+
+  if (openGroups.length) {
+    const firstGroup = openGroups.sort((left, right) => right.responses.length - left.responses.length)[0];
+    conclusions.push(
+      `En las respuestas abiertas, la mayor densidad de observaciones aparece en "${firstGroup.questionPrompt}", lo que indica que ese punto concentra una parte importante de las recomendaciones y preocupaciones expresadas.`,
+    );
+  }
+
+  if (!conclusions.length) {
+    conclusions.push(
+      relation
+        ? `La relacion ${getRelationConfig(relation).label.toLowerCase()} cuenta con registros suficientes para seguimiento, pero aun no presenta una masa critica de indicadores para generar conclusiones mas robustas.`
+        : "La base actual permite un monitoreo inicial, aunque sera conveniente ampliar la participacion para fortalecer la estabilidad del analisis institucional.",
+    );
+  }
+
+  return conclusions;
+}
+
+export async function GET(request: Request) {
   const session = await getAdminSession();
 
   if (!session) {
     return new Response("No autorizado", { status: 401 });
   }
 
-  if (session.role !== "superadmin") {
-    return new Response("Acceso restringido a Superadmin.", { status: 403 });
+  const url = new URL(request.url);
+  const requestedRelationParam = url.searchParams.get("relation");
+  const requestedRelation: RelationKey | null = isRelationKey(requestedRelationParam) ? requestedRelationParam : null;
+  const relationFilter: RelationKey | null = session.access === "all" ? requestedRelation : session.access;
+
+  if (requestedRelation && !canAccessRelation(session, requestedRelation)) {
+    return new Response("No autorizado para esta seccion.", { status: 403 });
   }
 
-  const data = await getDashboardData();
+  const data = await getDashboardData(relationFilter ?? undefined);
   const pdfDoc = await PDFDocument.create();
   const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -58,67 +325,58 @@ export async function GET() {
     totalSubmissions: data.totalSubmissions,
     totalDetailedAnswers: data.totalDetailedAnswers,
     latestSubmissionAt: data.latestSubmissionAt,
+    scopeTitle: getScopeTitle(relationFilter),
+    scopeSubtitle: getScopeSubtitle(relationFilter),
   });
 
   startNewPage(context, "Resumen ejecutivo");
   drawSectionTitle(context, "1. Resumen ejecutivo");
   drawParagraph(
     context,
-    `Este informe consolida la totalidad de respuestas registradas en la plataforma hasta ${formatAsuncionDate(
+    `Este documento presenta el corte acumulado de respuestas registrado hasta ${formatAsuncionDate(
       new Date().toISOString(),
-    )}. El objetivo es ofrecer una lectura tecnica, clara y acumulativa de la encuesta institucional de la ECP UNA.`,
+    )}. El informe se genera en modo ${relationFilter ? getRelationConfig(relationFilter).label : "general"} y resume participacion, estadisticas, interpretacion automatizada y detalle individual de registros.`,
   );
   drawParagraph(
     context,
-    `A la fecha del corte se registran ${data.totalSubmissions} formularios completos y ${data.totalDetailedAnswers} respuestas detalladas. Cada formulario corresponde a una persona encuestada y cada respuesta detallada representa una observacion individual normalizada por pregunta.`,
-  );
-  drawParagraph(
-    context,
-    `Documento emitido por ${session.username} con nivel de acceso ${getAdminRoleLabel(session.role)}.`,
-  );
-  drawParagraph(
-    context,
-    `La distribucion por tipo de encuestado permite identificar que sectores participan con mayor frecuencia. Las preguntas cerradas se analizan mediante frecuencias absolutas y porcentajes, lo que facilita detectar tendencias predominantes y prioridades institucionales.`,
+    `A la fecha del corte se registran ${data.totalSubmissions} formularios completos y ${data.totalDetailedAnswers} respuestas detalladas dentro del alcance autorizado. Documento emitido por ${session.username} con nivel ${getAdminRoleLabel(session.access)}.`,
   );
 
-  drawSectionTitle(context, "2. Distribucion por tipo de encuestado");
-  data.relationSummary.forEach((item) => {
-    const percent = data.totalSubmissions ? Math.round((item.total / data.totalSubmissions) * 100) : 0;
-    drawBullet(
+  if (!relationFilter) {
+    drawSectionTitle(context, "2. Distribucion por tipo de encuestado");
+    relationOrder.forEach((relation) => {
+      const item = data.relationSummary.find((current) => current.relation === relation);
+
+      if (!item) {
+        return;
+      }
+
+      const percent = data.totalSubmissions ? Math.round((item.total / data.totalSubmissions) * 100) : 0;
+      drawBullet(context, `${item.label}: ${item.total} formularios, equivalentes al ${percent}% del total acumulado.`);
+    });
+  } else {
+    drawSectionTitle(context, "2. Corte especifico por relacion");
+    drawParagraph(
       context,
-      `${item.label}: ${item.total} formularios, equivalentes al ${percent}% del total acumulado.`,
+      `Este informe se concentra unicamente en la relacion ${getRelationConfig(relationFilter).label.toLowerCase()}, por lo que todas las estadisticas, graficos y respuestas individuales corresponden exclusivamente a ese segmento.`,
     );
+  }
+
+  drawSectionTitle(context, relationFilter ? "3. Analisis automatizado" : "3. Analisis automatizado");
+  buildOverallConclusions(data, relationFilter).forEach((conclusion, index) => {
+    drawNumberedPoint(context, `Conclusion ${index + 1}`, conclusion);
   });
 
-  drawSectionTitle(context, "3. Interpretacion de indicadores");
-  drawNumberedPoint(
-    context,
-    "Total de encuestas",
-    "Corresponde a la cantidad de formularios finalizados y almacenados en la base de datos. Este indicador mide el volumen total de participacion alcanzado hasta el momento del informe.",
-  );
-  drawNumberedPoint(
-    context,
-    "Respuestas detalladas",
-    "Representa la suma de respuestas individuales indexadas por pregunta. Este valor es mayor que el total de formularios porque cada persona responde multiples preguntas y algunas incluyen varias selecciones.",
-  );
-  drawNumberedPoint(
-    context,
-    "Ultimo registro",
-    `Indica la fecha y hora del envio mas reciente disponible para analisis. El ultimo corte registrado es ${formatAsuncionDate(
-      data.latestSubmissionAt,
-    )}.`,
-  );
-
   startNewPage(context, "Resultados por pregunta");
-  drawSectionTitle(context, "4. Resultados acumulados por pregunta cerrada");
+  drawSectionTitle(context, relationFilter ? "4. Lectura punto por punto" : "4. Lectura punto por punto");
   drawParagraph(
     context,
-    "En esta seccion se resume cada pregunta cerrada con el total de respuestas consideradas y la distribucion observada en cada opcion disponible. La lectura porcentual ayuda a identificar preferencias, patrones y puntos de concentracion.",
+    "Cada pregunta cerrada se interpreta con base en su distribucion de respuestas. En las escalas se agrega el promedio obtenido para facilitar una lectura evaluativa comparable.",
   );
 
   data.questionSummaries.forEach((summary) => {
-    ensureSpace(context, 92);
-    drawSubheading(context, `${summary.moduleTitle}`);
+    ensureSpace(context, 96);
+    drawSubheading(context, summary.moduleTitle);
     drawParagraph(
       context,
       `${summary.questionPrompt} | Tipo: ${summary.questionType} | Respuestas consideradas: ${summary.totalResponses}.`,
@@ -127,17 +385,35 @@ export async function GET() {
     summary.options.forEach((option) => {
       drawBullet(context, `${option.label}: ${option.total} respuestas (${option.percent}%).`, 10.5);
     });
+    drawParagraph(context, buildClosedQuestionInsight(summary), 10.8);
   });
 
+  const openResponseGroups = collectOpenResponseGroups(data);
+
+  if (openResponseGroups.length) {
+    startNewPage(context, "Lectura cualitativa");
+    drawSectionTitle(context, "5. Lectura cualitativa de respuestas abiertas");
+    drawParagraph(
+      context,
+      "Las preguntas abiertas se resumen mediante una lectura automatizada de recurrencias tematicas. Este apartado complementa los porcentajes y ayuda a detectar focos narrativos de mejora o valoracion.",
+    );
+
+    openResponseGroups.forEach((group) => {
+      ensureSpace(context, 82);
+      drawSubheading(context, `${group.moduleTitle} | ${group.questionPrompt}`);
+      drawParagraph(context, buildOpenResponseInsight(group), 10.8);
+    });
+  }
+
   startNewPage(context, "Detalle por persona");
-  drawSectionTitle(context, "5. Anexo de respuestas individuales");
+  drawSectionTitle(context, openResponseGroups.length ? "6. Anexo de respuestas individuales" : "5. Anexo de respuestas individuales");
   drawParagraph(
     context,
-    "Este anexo organiza cada formulario por persona, tipo de encuestado y modulos contestados. Su funcion es permitir la trazabilidad de la informacion almacenada, verificando de manera ordenada las respuestas efectivamente capturadas.",
+    "Este anexo organiza cada formulario por persona, relacion con la Escuela y modulos respondidos. Su objetivo es permitir trazabilidad y revision puntual de la informacion registrada en la base.",
   );
 
   data.submissions.forEach((submission) => {
-    ensureSpace(context, 70);
+    ensureSpace(context, 74);
     drawSubheading(
       context,
       `${submission.respondentName} | ${submission.relationLabel} | ${formatAsuncionDate(submission.createdAt)}`,
@@ -149,10 +425,10 @@ export async function GET() {
     );
 
     submission.modules.forEach((module) => {
-      ensureSpace(context, 46);
-      drawParagraph(context, module.moduleTitle, 11.5, true);
+      ensureSpace(context, 44);
+      drawParagraph(context, module.moduleTitle, 11.2, true);
       module.questions.forEach((question) => {
-        drawBullet(context, `${question.questionPrompt}: ${question.answerDisplay}`, 10.5);
+        drawBullet(context, `${question.questionPrompt}: ${question.answerDisplay}`, 10.3);
       });
     });
   });
@@ -163,7 +439,7 @@ export async function GET() {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": 'attachment; filename="informe-general-encuesta-ecp-una.pdf"',
+      "Content-Disposition": `attachment; filename="${getReportFilename(relationFilter)}"`,
     },
   });
 }
@@ -176,16 +452,21 @@ function drawCover(
     totalSubmissions,
     totalDetailedAnswers,
     latestSubmissionAt,
+    scopeTitle,
+    scopeSubtitle,
   }: {
     ecpLogo: Awaited<ReturnType<PDFDocument["embedJpg"]>>;
     fdcsLogo: Awaited<ReturnType<PDFDocument["embedPng"]>>;
     totalSubmissions: number;
     totalDetailedAnswers: number;
     latestSubmissionAt: string | null;
+    scopeTitle: string;
+    scopeSubtitle: string;
   },
 ) {
   const { page, pageWidth, pageHeight, margin } = context;
   const innerWidth = pageWidth - margin * 2;
+
   page.drawRectangle({
     x: 0,
     y: 0,
@@ -208,21 +489,22 @@ function drawCover(
   const logosWidth = logoSize * 2 + logoGap;
   const logosStartX = margin + (innerWidth - logosWidth) / 2;
   const logoY = pageHeight - 138;
+
   page.drawImage(fdcsLogo, { x: logosStartX, y: logoY, width: logoSize, height: logoSize });
   page.drawImage(ecpLogo, { x: logosStartX + logoSize + logoGap, y: logoY, width: logoSize, height: logoSize });
 
   drawCenteredText(page, context.regularFont, "Universidad Nacional de Asuncion", 11, pageWidth / 2, pageHeight - 176, rgb(0.83, 0.88, 0.94));
   drawCenteredText(page, context.regularFont, "Facultad de Derecho y Ciencias Sociales | Escuela de Ciencias Politicas", 11, pageWidth / 2, pageHeight - 192, rgb(0.83, 0.88, 0.94));
-  drawCenteredText(page, context.boldFont, "INFORME GENERAL DE RESULTADOS", 23, pageWidth / 2, pageHeight - 248, rgb(1, 1, 1));
-  drawCenteredText(page, context.boldFont, "Encuesta institucional ECP UNA", 31, pageWidth / 2, pageHeight - 288, rgb(0.84, 0.69, 0.42));
+  drawCenteredText(page, context.boldFont, "INFORME TECNICO DE RESULTADOS", 23, pageWidth / 2, pageHeight - 248, rgb(1, 1, 1));
+  drawCenteredText(page, context.boldFont, scopeTitle, 29, pageWidth / 2, pageHeight - 288, rgb(0.84, 0.69, 0.42));
   drawWrappedText(
     page,
     context.regularFont,
-    "Documento tecnico generado a partir de la base de datos acumulada. Resume participacion, distribucion por relacion institucional, estadisticas por pregunta y detalle individual por registro.",
+    scopeSubtitle,
     12,
-    margin + 48,
+    margin + 54,
     pageHeight - 346,
-    innerWidth - 96,
+    innerWidth - 108,
     18,
     rgb(0.87, 0.91, 0.95),
     true,
@@ -232,6 +514,7 @@ function drawCover(
   const cardGap = 18;
   const cardWidth = (innerWidth - 44 - cardGap * 2) / 3;
   const cardsStartX = margin + 22;
+
   drawMetricCard(page, context, cardsStartX, cardY, cardWidth, 108, "Total de encuestas", String(totalSubmissions));
   drawMetricCard(
     page,
@@ -306,7 +589,7 @@ function startNewPage(context: ReportContext, title: string) {
   });
 
   drawText(context.page, context.boldFont, "ECP UNA | Informe tecnico", 11, context.margin, context.y, rgb(0.15, 0.2, 0.28));
-  drawText(context.page, context.regularFont, title, 10.5, context.pageWidth - context.margin - 140, context.y, rgb(0.47, 0.55, 0.65));
+  drawText(context.page, context.regularFont, title, 10.5, context.pageWidth - context.margin - 160, context.y, rgb(0.47, 0.55, 0.65));
   context.y -= 28;
   context.page.drawLine({
     start: { x: context.margin, y: context.y },
@@ -432,6 +715,7 @@ function wrapText(font: PDFFont, text: string, size: number, maxWidth: number) {
   words.forEach((word) => {
     const testLine = currentLine ? `${currentLine} ${word}` : word;
     const width = font.widthOfTextAtSize(testLine, size);
+
     if (width <= maxWidth) {
       currentLine = testLine;
       return;
@@ -440,6 +724,7 @@ function wrapText(font: PDFFont, text: string, size: number, maxWidth: number) {
     if (currentLine) {
       lines.push(currentLine);
     }
+
     currentLine = word;
   });
 

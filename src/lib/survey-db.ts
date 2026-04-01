@@ -3,6 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import postgres, { type Sql } from "postgres";
 import { questionnaireConfig } from "@/config/questionnaire";
+import { getModulesForRelation, getRelationConfig } from "@/lib/questionnaire-helpers";
 import { Question, QuestionType, RelationKey } from "@/lib/types";
 
 type AnswerMap = Record<string, string | string[]>;
@@ -69,6 +70,7 @@ export type QuestionSummary = {
   questionType: QuestionType;
   questionOrder: number;
   totalResponses: number;
+  averageScore?: number | null;
   options: Array<{
     label: string;
     total: number;
@@ -122,7 +124,7 @@ function getStorageMode() {
 }
 
 function getRelationModules(relation: RelationKey) {
-  return [questionnaireConfig.characterizationModule, ...questionnaireConfig.relations[relation].modules];
+  return getModulesForRelation(relation);
 }
 
 function getQuestionMap(relation: RelationKey) {
@@ -390,17 +392,25 @@ async function ensurePostgresSchema() {
   await globalThis.__encuestaPostgresSchemaPromise;
 }
 
-function buildDashboardData(submissionRows: SubmissionRow[], answerRows: AnswerRow[]): DashboardData {
-  const relationSummary = (Object.keys(questionnaireConfig.relations) as RelationKey[]).map((relation) => ({
+function buildDashboardData(
+  submissionRows: SubmissionRow[],
+  answerRows: AnswerRow[],
+  relationFilter?: RelationKey,
+): DashboardData {
+  const relationKeys = relationFilter
+    ? [relationFilter]
+    : (Object.keys(questionnaireConfig.relations) as RelationKey[]);
+
+  const relationSummary = relationKeys.map((relation) => ({
     relation,
-    label: questionnaireConfig.relations[relation].label,
+    label: getRelationConfig(relation).label,
     total: submissionRows.filter((submission) => submission.relation === relation).length,
   }));
 
   const submissions = submissionRows.map<SubmissionDetail>((submission) => ({
     id: submission.id,
     relation: submission.relation,
-    relationLabel: questionnaireConfig.relations[submission.relation].label,
+    relationLabel: getRelationConfig(submission.relation).label,
     respondentName: submission.respondent_name || "Sin nombre registrado",
     respondentEmail: submission.respondent_email || "Sin correo",
     respondentPhone: submission.respondent_phone || "Sin telefono",
@@ -424,6 +434,8 @@ function buildDashboardData(submissionRows: SubmissionRow[], answerRows: AnswerR
       questionOrder: number;
       submissionIds: Set<number>;
       optionCounts: Map<string, number>;
+      numericTotal: number;
+      numericCount: number;
     }
   >();
 
@@ -439,10 +451,20 @@ function buildDashboardData(submissionRows: SubmissionRow[], answerRows: AnswerR
       questionOrder: row.questionOrder,
       submissionIds: new Set<number>(),
       optionCounts: new Map<string, number>(),
+      numericTotal: 0,
+      numericCount: 0,
     };
 
     current.submissionIds.add(row.submission_id);
     current.optionCounts.set(row.answerDisplay, (current.optionCounts.get(row.answerDisplay) ?? 0) + 1);
+    if (row.questionType === "scale") {
+      const numericValue = Number(row.answerValue);
+
+      if (!Number.isNaN(numericValue)) {
+        current.numericTotal += numericValue;
+        current.numericCount += 1;
+      }
+    }
     questionSummaryMap.set(key, current);
   });
 
@@ -466,6 +488,9 @@ function buildDashboardData(submissionRows: SubmissionRow[], answerRows: AnswerR
         questionType: summary.questionType,
         questionOrder: summary.questionOrder,
         totalResponses,
+        averageScore: summary.questionType === "scale" && summary.numericCount
+          ? Number((summary.numericTotal / summary.numericCount).toFixed(2))
+          : null,
         options,
       };
     })
@@ -623,11 +648,23 @@ async function saveSurveySubmissionToPostgres(relation: RelationKey, answers: An
   });
 }
 
-function getDashboardDataFromSqlite() {
+function getDashboardDataFromSqlite(relationFilter?: RelationKey) {
   const db = getSqliteDatabase();
-  const submissionRows = db
-    .prepare(
+  const submissionQuery = relationFilter
+    ? `
+        SELECT
+          id,
+          relation,
+          respondent_name,
+          respondent_email,
+          respondent_phone,
+          created_at,
+          answers_json
+        FROM survey_submissions
+        WHERE relation = ?
+        ORDER BY created_at DESC, id DESC
       `
+    : `
         SELECT
           id,
           relation,
@@ -638,13 +675,29 @@ function getDashboardDataFromSqlite() {
           answers_json
         FROM survey_submissions
         ORDER BY created_at DESC, id DESC
-      `,
-    )
-    .all() as SubmissionRow[];
+      `;
 
-  const answerRows = db
-    .prepare(
+  const answerQuery = relationFilter
+    ? `
+        SELECT
+          id,
+          submission_id,
+          relation,
+          module_id AS moduleId,
+          module_title AS moduleTitle,
+          module_order AS moduleOrder,
+          question_id AS questionId,
+          question_prompt AS questionPrompt,
+          question_type AS questionType,
+          question_order AS questionOrder,
+          answer_value AS answerValue,
+          answer_display AS answerDisplay,
+          answer_order AS answerOrder
+        FROM survey_answers
+        WHERE relation = ?
+        ORDER BY submission_id DESC, module_order ASC, question_order ASC, answer_order ASC
       `
+    : `
         SELECT
           id,
           submission_id,
@@ -661,49 +714,89 @@ function getDashboardDataFromSqlite() {
           answer_order AS answerOrder
         FROM survey_answers
         ORDER BY submission_id DESC, module_order ASC, question_order ASC, answer_order ASC
-      `,
-    )
-    .all() as AnswerRow[];
+      `;
 
-  return buildDashboardData(submissionRows, answerRows);
+  const submissionRows = (relationFilter
+    ? db.prepare(submissionQuery).all(relationFilter)
+    : db.prepare(submissionQuery).all()) as SubmissionRow[];
+
+  const answerRows = (relationFilter
+    ? db.prepare(answerQuery).all(relationFilter)
+    : db.prepare(answerQuery).all()) as AnswerRow[];
+
+  return buildDashboardData(submissionRows, answerRows, relationFilter);
 }
 
-async function getDashboardDataFromPostgres() {
+async function getDashboardDataFromPostgres(relationFilter?: RelationKey) {
   await ensurePostgresSchema();
   const sql = getPostgresClient();
-  const submissionRows = await sql<SubmissionRow[]>`
-    SELECT
-      id,
-      relation,
-      respondent_name,
-      respondent_email,
-      respondent_phone,
-      created_at,
-      answers_json
-    FROM survey_submissions
-    ORDER BY created_at DESC, id DESC
-  `;
+  const submissionRows = relationFilter
+    ? await sql<SubmissionRow[]>`
+        SELECT
+          id,
+          relation,
+          respondent_name,
+          respondent_email,
+          respondent_phone,
+          created_at,
+          answers_json
+        FROM survey_submissions
+        WHERE relation = ${relationFilter}
+        ORDER BY created_at DESC, id DESC
+      `
+    : await sql<SubmissionRow[]>`
+        SELECT
+          id,
+          relation,
+          respondent_name,
+          respondent_email,
+          respondent_phone,
+          created_at,
+          answers_json
+        FROM survey_submissions
+        ORDER BY created_at DESC, id DESC
+      `;
 
-  const answerRows = await sql<AnswerRow[]>`
-    SELECT
-      id,
-      submission_id,
-      relation,
-      module_id AS "moduleId",
-      module_title AS "moduleTitle",
-      module_order AS "moduleOrder",
-      question_id AS "questionId",
-      question_prompt AS "questionPrompt",
-      question_type AS "questionType",
-      question_order AS "questionOrder",
-      answer_value AS "answerValue",
-      answer_display AS "answerDisplay",
-      answer_order AS "answerOrder"
-    FROM survey_answers
-    ORDER BY submission_id DESC, module_order ASC, question_order ASC, answer_order ASC
-  `;
+  const answerRows = relationFilter
+    ? await sql<AnswerRow[]>`
+        SELECT
+          id,
+          submission_id,
+          relation,
+          module_id AS "moduleId",
+          module_title AS "moduleTitle",
+          module_order AS "moduleOrder",
+          question_id AS "questionId",
+          question_prompt AS "questionPrompt",
+          question_type AS "questionType",
+          question_order AS "questionOrder",
+          answer_value AS "answerValue",
+          answer_display AS "answerDisplay",
+          answer_order AS "answerOrder"
+        FROM survey_answers
+        WHERE relation = ${relationFilter}
+        ORDER BY submission_id DESC, module_order ASC, question_order ASC, answer_order ASC
+      `
+    : await sql<AnswerRow[]>`
+        SELECT
+          id,
+          submission_id,
+          relation,
+          module_id AS "moduleId",
+          module_title AS "moduleTitle",
+          module_order AS "moduleOrder",
+          question_id AS "questionId",
+          question_prompt AS "questionPrompt",
+          question_type AS "questionType",
+          question_order AS "questionOrder",
+          answer_value AS "answerValue",
+          answer_display AS "answerDisplay",
+          answer_order AS "answerOrder"
+        FROM survey_answers
+        ORDER BY submission_id DESC, module_order ASC, question_order ASC, answer_order ASC
+      `;
 
-  return buildDashboardData(submissionRows, answerRows);
+  return buildDashboardData(submissionRows, answerRows, relationFilter);
 }
 
 export async function saveSurveySubmission(relation: RelationKey, answers: AnswerMap) {
@@ -712,6 +805,8 @@ export async function saveSurveySubmission(relation: RelationKey, answers: Answe
     : Promise.resolve(saveSurveySubmissionToSqlite(relation, answers));
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  return getStorageMode() === "postgres" ? getDashboardDataFromPostgres() : Promise.resolve(getDashboardDataFromSqlite());
+export async function getDashboardData(relationFilter?: RelationKey): Promise<DashboardData> {
+  return getStorageMode() === "postgres"
+    ? getDashboardDataFromPostgres(relationFilter)
+    : Promise.resolve(getDashboardDataFromSqlite(relationFilter));
 }

@@ -36,6 +36,7 @@ export type Module = {
 export type RelationConfig = {
   label: string;
   intro: string;
+  usesSharedCharacterization?: boolean;
   modules: Module[];
 };
 

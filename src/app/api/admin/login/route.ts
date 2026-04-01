@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { ADMIN_SESSION_COOKIE, getAdminSessionCookieValue, validateAdminCredentials } from "@/lib/admin-auth";
+import {
+  ADMIN_SESSION_COOKIE,
+  getAdminDefaultPath,
+  getAdminSessionCookieValue,
+  validateAdminCredentials,
+} from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 
@@ -15,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.redirect(new URL("/admin?error=invalid", url), 303);
   }
 
-  const response = NextResponse.redirect(new URL("/admin", url), 303);
+  const response = NextResponse.redirect(new URL(getAdminDefaultPath(session.access), url), 303);
   response.cookies.set(ADMIN_SESSION_COOKIE, getAdminSessionCookieValue(session), {
     httpOnly: true,
     sameSite: "lax",

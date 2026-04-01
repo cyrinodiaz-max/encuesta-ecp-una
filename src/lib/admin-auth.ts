@@ -1,28 +1,72 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
+import { RelationKey } from "@/lib/types";
 
-export type AdminRole = "superadmin" | "analista";
+export type AdminAccessScope = RelationKey | "all";
 
 type AdminAccount = {
   username: string;
   password: string;
-  role: AdminRole;
+  access: AdminAccessScope;
 };
 
 export type AdminSession = {
   username: string;
-  role: AdminRole;
+  access: AdminAccessScope;
 };
 
 const DEFAULT_ADMIN_SESSION_SALT = "ecp-una-panel";
 
 const DEFAULT_ADMIN_ACCOUNTS: AdminAccount[] = [
-  { username: "AdminCPUNA", password: "EscuelaFDCS2026", role: "superadmin" },
-  { username: "CECPUNA", password: "admin123", role: "analista" },
-  { username: "admin", password: "admin1714", role: "superadmin" },
+  { username: "Egresados", password: "ESC-CP123", access: "egresado" },
+  { username: "Docente", password: "ESC-CP1714", access: "docente" },
+  { username: "Administrativo", password: "ESC-CP-ADMIN", access: "all" },
+  { username: "CECPUNA", password: "ESC-CP-CECPUNA", access: "estudiante" },
 ];
 
 export const ADMIN_SESSION_COOKIE = "ecp-admin-session";
+
+function isRelationKey(value: string): value is RelationKey {
+  return value === "estudiante" || value === "docente" || value === "funcionario" || value === "egresado";
+}
+
+function isAccessScope(value: string): value is AdminAccessScope {
+  return value === "all" || isRelationKey(value);
+}
+
+function normalizeAccount(raw: unknown): AdminAccount | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+
+  const candidate = raw as {
+    username?: unknown;
+    password?: unknown;
+    access?: unknown;
+    role?: unknown;
+  };
+
+  const username = typeof candidate.username === "string" ? candidate.username : "";
+  const password = typeof candidate.password === "string" ? candidate.password : "";
+  const directAccess = typeof candidate.access === "string" && isAccessScope(candidate.access) ? candidate.access : null;
+  const legacyAccess =
+    candidate.role === "superadmin"
+      ? "all"
+      : typeof candidate.role === "string" && isRelationKey(candidate.role)
+        ? candidate.role
+        : null;
+  const access = directAccess ?? legacyAccess;
+
+  if (!username || !password || !access) {
+    return null;
+  }
+
+  return {
+    username,
+    password,
+    access,
+  };
+}
 
 function getAdminAccounts() {
   const raw = process.env.ADMIN_ACCOUNTS_JSON?.trim();
@@ -32,18 +76,14 @@ function getAdminAccounts() {
   }
 
   try {
-    const parsed = JSON.parse(raw) as AdminAccount[];
+    const parsed = JSON.parse(raw) as unknown[];
 
     if (!Array.isArray(parsed) || !parsed.length) {
       return DEFAULT_ADMIN_ACCOUNTS;
     }
 
-    return parsed.filter(
-      (account): account is AdminAccount =>
-        typeof account?.username === "string" &&
-        typeof account?.password === "string" &&
-        (account?.role === "superadmin" || account?.role === "analista"),
-    );
+    const normalized = parsed.map(normalizeAccount).filter((account): account is AdminAccount => Boolean(account));
+    return normalized.length ? normalized : DEFAULT_ADMIN_ACCOUNTS;
   } catch {
     return DEFAULT_ADMIN_ACCOUNTS;
   }
@@ -83,21 +123,19 @@ function parseSessionCookieValue(cookieValue: string) {
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as AdminSession;
 
-    if (
-      typeof session?.username !== "string" ||
-      (session?.role !== "superadmin" && session?.role !== "analista")
-    ) {
+    if (typeof session?.username !== "string" || !isAccessScope(session?.access)) {
       return null;
     }
 
     const knownAccount = getAdminAccounts().find(
-      (account) => normalizeUsername(account.username) === normalizeUsername(session.username) && account.role === session.role,
+      (account) =>
+        normalizeUsername(account.username) === normalizeUsername(session.username) && account.access === session.access,
     );
 
     return knownAccount
       ? {
           username: knownAccount.username,
-          role: knownAccount.role,
+          access: knownAccount.access,
         }
       : null;
   } catch {
@@ -105,8 +143,52 @@ function parseSessionCookieValue(cookieValue: string) {
   }
 }
 
-export function getAdminRoleLabel(role: AdminRole) {
-  return role === "superadmin" ? "Superadmin" : "Analista";
+export function getAdminRoleLabel(access: AdminAccessScope) {
+  if (access === "all") {
+    return "Acceso completo";
+  }
+
+  if (access === "estudiante") {
+    return "Solo estudiantes";
+  }
+
+  if (access === "docente") {
+    return "Solo docentes";
+  }
+
+  if (access === "funcionario") {
+    return "Solo funcionarios";
+  }
+
+  return "Solo egresados";
+}
+
+export function getAdminAccessTitle(access: AdminAccessScope) {
+  if (access === "all") {
+    return "Panel general";
+  }
+
+  if (access === "estudiante") {
+    return "Panel de estudiantes";
+  }
+
+  if (access === "docente") {
+    return "Panel de docentes";
+  }
+
+  if (access === "funcionario") {
+    return "Panel de funcionarios";
+  }
+
+  return "Panel de egresados";
+}
+
+export function getAdminDefaultPath(access: AdminAccessScope) {
+  return access === "all" ? "/admin" : `/admin?relation=${access}`;
+}
+
+export function canAccessRelation(session: AdminSession, relation: RelationKey) {
+  return session.access === "all" || session.access === relation;
 }
 
 export function validateAdminCredentials(username: string, password: string) {
@@ -117,7 +199,7 @@ export function validateAdminCredentials(username: string, password: string) {
   return matchedAccount
     ? {
         username: matchedAccount.username,
-        role: matchedAccount.role,
+        access: matchedAccount.access,
       }
     : null;
 }

@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { useAccessibility } from "@/components/AccessibilityPanel";
 import { QuestionRenderer } from "@/components/QuestionRenderer";
 import { questionnaireConfig } from "@/config/questionnaire";
+import { getModulesForRelation, getRelationConfig } from "@/lib/questionnaire-helpers";
 import { Module, Question, RelationKey } from "@/lib/types";
 
 const relationCards: { key: RelationKey; title: string }[] = [
@@ -39,18 +40,20 @@ export function SurveyShell() {
       return [];
     }
 
-    return [questionnaireConfig.characterizationModule, ...questionnaireConfig.relations[relation].modules];
+    return getModulesForRelation(relation);
   }, [relation]);
 
   const currentModule = modules[step];
-  const selectedRelation = relation ? questionnaireConfig.relations[relation] : null;
+  const selectedRelation = relation ? getRelationConfig(relation) : null;
 
   const canContinue = useMemo(() => {
     if (!currentModule) {
       return false;
     }
 
-    return currentModule.questions.every((question) => isQuestionAnswered(question, answers[question.id]));
+    return currentModule.questions.every(
+      (question) => question.required === false || isQuestionAnswered(question, answers[question.id]),
+    );
   }, [answers, currentModule]);
 
   const progress = modules.length ? Math.round(((step + 1) / modules.length) * 100) : 0;
@@ -180,7 +183,7 @@ export function SurveyShell() {
                       <div>
                         <span className="text-lg font-semibold">{card.title}</span>
                         <p className="mt-2 text-sm leading-6 text-tenue">
-                          {questionnaireConfig.relations[card.key].intro}
+                          {card.key === "egresado" ? getRelationConfig(card.key).intro : questionnaireConfig.relations[card.key].intro}
                         </p>
                       </div>
                     </div>
@@ -268,7 +271,7 @@ export function SurveyShell() {
 
       <div className="mt-8 flex flex-col gap-4 rounded-3xl border border-borde bg-panelSec/65 p-4 md:flex-row md:items-center md:justify-between">
         <div className="space-y-2 text-sm leading-6 text-tenue">
-          <p>Todas las preguntas son obligatorias para avanzar al siguiente modulo.</p>
+          <p>Responda los campos requeridos para avanzar al siguiente modulo.</p>
           {submitError ? <p className="text-red-200">{submitError}</p> : null}
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
